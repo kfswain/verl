@@ -385,12 +385,14 @@ class RolloutConfig(BaseConfig):
             )
 
         # DAS (distribution-aware speculative decoding): same dict/DictConfig coercion.
-        if isinstance(self.das, dict):
+        if isinstance(self.das, DASConfig):
+            pass
+        elif isinstance(self.das, dict):
             object.__setattr__(self, "das", DASConfig(**self.das))
-        elif not isinstance(self.das, DASConfig):
-            if not isinstance(self.das, DictConfig):
-                raise TypeError(f"rollout.das must be dict, DictConfig, or DASConfig; got {type(self.das).__name__}.")
+        elif isinstance(self.das, DictConfig):
             object.__setattr__(self, "das", DASConfig(**OmegaConf.to_container(self.das, resolve=True)))
+        else:
+            raise TypeError(f"rollout.das must be dict, DictConfig, or DASConfig; got {type(self.das).__name__}.")
 
         if self.das.enable:
             if self.name != "vllm":
