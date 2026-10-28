@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""DAS agent-loop workers and managers for the DataProto paths (legacy sync trainer, fully-async).
+"""DAS agent-loop worker and manager for the DataProto path (fully-async rollouter).
 
 The TransferQueue (v1) variants live in :mod:`verl.experimental.das.agent_loop_tq`
 so this module never imports ``transfer_queue``.
@@ -24,7 +24,7 @@ import os
 
 import ray
 
-from verl.experimental.agent_loop.agent_loop import AgentLoopManager, AgentLoopWorker
+from verl.experimental.agent_loop.agent_loop import AgentLoopWorker
 from verl.experimental.das.client import push_gate, wrap_llm_client
 from verl.experimental.das.service import get_or_create_suffix_service
 from verl.experimental.fully_async_policy.fully_async_rollouter import FullyAsyncAgentLoopManager
@@ -84,9 +84,9 @@ class DASIterationDriver:
         step = int(step)
         if self._last_step is not None and step <= self._last_step:
             return
-        self._last_step = step
         try:
             info = ray.get(self.service.begin_iteration.remote(step), timeout=_BEGIN_ITERATION_TIMEOUT_S)
+            self._last_step = step
             logger.info(
                 "DAS: store iteration %s -> problems=%s total_tokens=%s log_version=%s",
                 info.get("iteration"),
@@ -96,19 +96,6 @@ class DASIterationDriver:
             )
         except Exception as e:
             logger.warning("DAS: begin_iteration(%d) failed (%s); engines keep the previous iteration", step, e)
-
-
-class DASAgentLoopManager(AgentLoopManager):
-    """Legacy DataProto trainer: advances the store once per ``generate_sequences`` call."""
-
-    def __init__(self, config, llm_client, *args, **kwargs):
-        self.agent_loop_workers_class = ray.remote(DASAgentLoopWorker)
-        super().__init__(config, llm_client, *args, **kwargs)
-        self.das = DASIterationDriver(das_config_from(config))
-
-    async def generate_sequences(self, prompts: DataProto) -> DataProto:
-        self.das.begin_iteration(prompts.meta_info.get("global_steps"), bool(prompts.meta_info.get("validate", False)))
-        return await super().generate_sequences(prompts)
 
 
 class DASFullyAsyncAgentLoopManager(FullyAsyncAgentLoopManager):

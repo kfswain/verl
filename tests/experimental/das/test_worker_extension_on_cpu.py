@@ -19,9 +19,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.experimental.das.fakes import PySuffixTree
 from verl.experimental.das import proposer_patch, worker_extension
 from verl.experimental.das.contracts import DeltaBatch, TrajectoryDelta, serialize_delta_batch
-from verl.experimental.das.drafter_state import DASDrafterState, PySuffixTree, register_active_state
+from verl.experimental.das.drafter_state import DASDrafterState, register_active_state
 from verl.experimental.das.worker_extension import (
     DAS_CONFIG_ENV,
     DASWorkerExtensionMixin,
@@ -109,10 +110,9 @@ def test_rpcs_without_and_with_active_state():
 
     worker = Worker()
     assert worker.das_apply_deltas(b"\x01") == -1
-    assert worker.das_get_tree_stats() == {}
 
     state = DASDrafterState(DASConfig(), max_tree_depth=24, tree_factory=PySuffixTree)
     register_active_state(state)
     payload = serialize_delta_batch(DeltaBatch(to_version=3, iteration=1, adds=[TrajectoryDelta("p", 0, (1, 2, 3))]))
     assert worker.das_apply_deltas(payload) == 3
-    assert worker.das_get_tree_stats()["problem_trees"] == 1
+    assert state.tree_stats()["problem_trees"] == 1

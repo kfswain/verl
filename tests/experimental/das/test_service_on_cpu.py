@@ -279,14 +279,3 @@ def test_dropped_problem_purges_in_range_adds():
     dropped = [d for b in batches for d in b.dropped_problems]
     assert {tuple(a.token_ids) for a in adds} == {(4, 5, 6)}
     assert dropped == ["p1"]
-
-
-def test_replica_lag_metric():
-    svc = make_service()
-    svc.begin_iteration(1)
-    svc.add_trajectories("w", [push("p1", [1, 2, 3])])
-    svc.begin_iteration(2)
-    svc.get_deltas("r1", -1)
-    metrics = svc.get_metrics()
-    assert metrics["das_max_replica_lag"] > 0
-    assert metrics["das_withheld_entries"] == 0.0

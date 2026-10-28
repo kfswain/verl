@@ -26,12 +26,12 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from tests.experimental.das.fakes import PySuffixTree
 from verl.experimental.das import proposer_patch
 from verl.experimental.das.contracts import DeltaBatch, TrajectoryDelta, serialize_delta_batch
 from verl.experimental.das.drafter_state import (
     DASDrafterState,
     DraftResult,
-    PySuffixTree,
     get_active_state,
     register_active_state,
 )

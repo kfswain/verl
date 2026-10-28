@@ -15,10 +15,10 @@
 
 import pytest
 
-from tests.experimental.das.fakes import FakeActor
+from tests.experimental.das.fakes import FakeActor, PySuffixTree
 from verl.experimental.das import service as service_module
 from verl.experimental.das.contracts import TrajectoryPush, deserialize_delta_batch
-from verl.experimental.das.drafter_state import DASDrafterState, PySuffixTree
+from verl.experimental.das.drafter_state import DASDrafterState
 from verl.experimental.das.pump import DeltaPump
 from verl.experimental.das.service import SuffixDataService
 from verl.workers.config.das import DASConfig
@@ -32,8 +32,6 @@ class Receiver:
         self.calls: list[tuple[str, int]] = []
 
     async def collective_rpc(self, method, args=(), **kwargs):
-        if method == "das_get_tree_stats":
-            return [self.state.tree_stats()]
         assert method == "das_apply_deltas"
         (payload,) = args
         self.state.apply_delta_batch(payload)
@@ -72,7 +70,6 @@ async def test_applies_in_order_and_tracks_version():
     assert [v for _, v in receiver.calls] == sorted(v for _, v in receiver.calls)
     assert receiver.state.speculate("p1", [1, 2, 3], budget=8, max_spec_factor=2.0).token_ids == [4]
     assert await pump.run_once() == 0  # caught up
-    assert store.get_metrics()["das_max_replica_lag"] == 0.0
 
 
 @pytest.mark.asyncio

@@ -23,16 +23,11 @@ whenever a delta batch advances the iteration.
 from __future__ import annotations
 
 import contextlib
-import logging
-import os
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from verl.experimental.das.contracts import SEQ_ID_LIMIT, TRANSIENT_BASE, deserialize_delta_batch
 from verl.workers.config.das import CLS_MEDIUM, DASConfig
-
-logger = logging.getLogger(__name__)
-logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
 
 @dataclass
@@ -40,81 +35,6 @@ class DraftResult:
     token_ids: list[int]
     score: float
     match_len: int
-
-
-class PySuffixTree:
-    """Pure-Python frequency-greedy suffix drafter.
-
-    Semantically mirrors arctic's SuffixTree (longest-suffix match, greedy
-    most-frequent continuation, frequency-ratio probabilities, the
-    ``max_spec_factor * match_len`` cap) with O(corpus) scans. Used for unit
-    tests and as an emergency fallback when arctic-inference is missing.
-    """
-
-    def __init__(self, max_depth: int) -> None:
-        self.max_depth = max_depth
-        self._seqs: dict[int, list[int]] = {}
-
-    def extend(self, seq_id: int, token_ids) -> None:
-        self._seqs.setdefault(seq_id, []).extend(int(t) for t in token_ids)
-
-    def remove(self, seq_id: int) -> None:
-        self._seqs.pop(seq_id, None)
-
-    def estimate_memory(self) -> int:
-        # Rough parity with arctic's estimate_memory (bytes).
-        return sum(28 + 8 * len(seq) for seq in self._seqs.values())
-
-    def speculate(
-        self,
-        pattern,
-        max_spec_tokens: int,
-        max_spec_factor: float = 1.0,
-        max_spec_offset: float = 0.0,
-        min_token_prob: float = 0.1,
-    ) -> DraftResult | None:
-        pattern = [int(t) for t in pattern][-self.max_depth :]
-        for match_len in range(len(pattern), 0, -1):
-            suffix = pattern[-match_len:]
-            cursors = self._match_positions(suffix)
-            if not cursors:
-                continue
-            cap = min(max_spec_tokens, int(match_len * max_spec_factor + max_spec_offset + 1e-6))
-            draft = self._greedy_draft(cursors, cap, min_token_prob)
-            if draft.token_ids:
-                draft.match_len = match_len
-                return draft
-        return None
-
-    def _match_positions(self, suffix: list[int]) -> list[tuple[int, int]]:
-        n = len(suffix)
-        out: list[tuple[int, int]] = []
-        for seq_id, seq in self._seqs.items():
-            out.extend((seq_id, pos + n) for pos in range(len(seq) - n + 1) if seq[pos : pos + n] == suffix)
-        return out
-
-    def _greedy_draft(self, cursors: list[tuple[int, int]], cap: int, min_token_prob: float) -> DraftResult:
-        tokens: list[int] = []
-        prob = 1.0
-        score = 0.0
-        while len(tokens) < cap:
-            counts: dict[int, int] = {}
-            total = 0
-            for seq_id, pos in cursors:
-                seq = self._seqs[seq_id]
-                if pos < len(seq):
-                    counts[seq[pos]] = counts.get(seq[pos], 0) + 1
-                    total += 1
-            if not counts:
-                break
-            best_tok = max(counts, key=lambda t: counts[t])
-            prob *= counts[best_tok] / total
-            if prob < min_token_prob:
-                break
-            tokens.append(best_tok)
-            score += prob
-            cursors = [(s, p + 1) for s, p in cursors if self._seqs[s][p : p + 1] == [best_tok]]
-        return DraftResult(tokens, score, 0)
 
 
 class ArcticSuffixTree:
@@ -134,12 +54,6 @@ class ArcticSuffixTree:
 
     def remove(self, seq_id: int) -> None:
         self._tree.remove(seq_id)
-
-    def estimate_memory(self) -> int:
-        try:
-            return int(self._tree.estimate_memory())
-        except Exception:  # older arctic builds lack the binding
-            return 0
 
     def speculate(
         self,
@@ -168,14 +82,6 @@ class ArcticSuffixTree:
         return DraftResult(token_ids, float(getattr(draft, "score", 0.0)), int(getattr(draft, "match_len", 0)))
 
 
-def default_tree_factory(max_depth: int) -> ArcticSuffixTree | PySuffixTree:
-    try:
-        return ArcticSuffixTree(max_depth)
-    except Exception as e:
-        logger.warning("arctic-inference unavailable (%s); using PySuffixTree fallback", e)
-        return PySuffixTree(max_depth)
-
-
 class BudgetPolicy:
     """Length-aware Long/Medium/Short draft budgets with upgrade-only runtime reclassification."""
 
@@ -200,7 +106,7 @@ class DASDrafterState:
     ) -> None:
         self.cfg = cfg or DASConfig()
         self.max_tree_depth = max_tree_depth
-        self._tree_factory = tree_factory or default_tree_factory
+        self._tree_factory = tree_factory or ArcticSuffixTree
         self.budget_policy = BudgetPolicy(self.cfg)
         self._trees: dict[str, object] = {}
         self._cls: dict[str, int] = {}
@@ -321,18 +227,7 @@ class DASDrafterState:
             "applied_batches": self.applied_batches,
             "snapshots_applied": self.snapshots_applied,
             "drafts_emitted": self.drafts_emitted,
-            "tree_memory_bytes": self._trees_memory_bytes(),
         }
-
-    def _trees_memory_bytes(self) -> int:
-        total = 0
-        for tree in self._trees.values():
-            estimate = getattr(tree, "estimate_memory", None)
-            if estimate is None:
-                continue
-            with contextlib.suppress(Exception):
-                total += int(estimate())
-        return total
 
 
 # Module-level handle so the verl worker extension (which only has the vLLM

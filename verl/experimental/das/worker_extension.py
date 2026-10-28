@@ -104,10 +104,6 @@ class DASWorkerExtensionMixin:
         )
         return state.state_version()
 
-    def das_get_tree_stats(self) -> dict:
-        state = get_active_state()
-        return state.tree_stats() if state is not None else {}
-
 
 try:
     from verl.workers.rollout.vllm_rollout.utils import vLLMColocateWorkerExtension

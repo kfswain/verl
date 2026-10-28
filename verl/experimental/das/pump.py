@@ -145,37 +145,18 @@ class DeltaPump:
         applied = 0
         async with self._apply_lock:
             while self._buffer:
-                to_version, payload = self._buffer.pop(0)
-                self._buffer_bytes -= len(payload)
+                to_version, payload = self._buffer[0]
                 result = self._collective_rpc("das_apply_deltas", args=(payload,))
                 if inspect.isawaitable(result):
                     await result
+                self._buffer.pop(0)
+                self._buffer_bytes -= len(payload)
                 self.version = to_version
                 applied += 1
                 self.applied_batches += 1
         if applied:
             logger.info("DAS: applied %d delta batches, engine at store version %d", applied, self.version)
-            await self._log_tree_stats()
         return applied
-
-    async def _log_tree_stats(self) -> None:
-        """Best-effort INFO line with one TP rank's tree stats (never raises)."""
-        try:
-            stats = self._collective_rpc("das_get_tree_stats", args=())
-            if inspect.isawaitable(stats):
-                stats = await stats
-            if isinstance(stats, list) and stats:
-                stats = stats[0]
-            if stats:
-                logger.info(
-                    "DAS: engine trees=%s transient=%s drafts_emitted=%s tree_memory_bytes=%s",
-                    stats.get("problem_trees"),
-                    stats.get("transient_requests"),
-                    stats.get("drafts_emitted"),
-                    stats.get("tree_memory_bytes"),
-                )
-        except Exception as e:
-            logger.debug("DAS: tree stats unavailable: %s", e)
 
     async def _run(self) -> None:
         while True:

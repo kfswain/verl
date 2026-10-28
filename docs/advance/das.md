@@ -101,9 +101,8 @@ suffix decoding unchanged.
 ## 5. Observability
 
 - Store metrics: `SuffixDataService.get_metrics()` (`das_iteration`, `das_problem_count`, `das_total_tokens`,
-  `das_withheld_entries`, `das_max_replica_lag`, ...), reachable with `ray.get_actor(service_name)`.
-- Engine side: `collective_rpc("das_get_tree_stats")` returns per-rank tree counts, applied batches and tree
-  memory; vLLM's `vllm:spec_decode_*` metrics report drafts and acceptance as usual.
+  `das_withheld_entries`, ...), reachable with `ray.get_actor(service_name)`.
+- vLLM's `vllm:spec_decode_*` metrics report drafts and acceptance as usual.
 - Logs (with `VERL_LOGGING_LEVEL=INFO`): in each TP-rank worker `DAS: SuffixDecodingProposer patched in place`,
   `DAS: suffix proposer initialized with per-problem drafter state`, and one
   `DAS: applied delta batch -> store version V (iteration I, trees=T, drafts_emitted=D)` per training step; in the

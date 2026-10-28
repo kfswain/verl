@@ -11,8 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""DASDrafterState + PySuffixTree, exercised end-to-end against the service."""
+"""DASDrafterState exercised end-to-end against the service."""
 
+from tests.experimental.das.fakes import PySuffixTree
 from verl.experimental.das.contracts import (
     TRANSIENT_BASE,
     DeltaBatch,
@@ -20,7 +21,7 @@ from verl.experimental.das.contracts import (
     TrajectoryPush,
     serialize_delta_batch,
 )
-from verl.experimental.das.drafter_state import DASDrafterState, PySuffixTree
+from verl.experimental.das.drafter_state import DASDrafterState
 from verl.experimental.das.service import SuffixDataService
 from verl.workers.config.das import DASConfig
 
@@ -34,51 +35,6 @@ def batch_payload(**kwargs):
     defaults = {"to_version": 1, "iteration": 0}
     defaults.update(kwargs)
     return serialize_delta_batch(DeltaBatch(**defaults))
-
-
-# ------------------------------------------------------------- PySuffixTree
-
-
-def test_py_suffix_tree_drafts_continuation():
-    tree = PySuffixTree(max_depth=16)
-    tree.extend(1, [10, 20, 30, 40, 50, 60])
-    draft = tree.speculate([10, 20, 30], max_spec_tokens=8, max_spec_factor=2.0)
-    assert draft is not None
-    assert draft.token_ids == [40, 50, 60]
-    assert draft.match_len == 3
-
-
-def test_py_suffix_tree_longest_match_wins():
-    tree = PySuffixTree(max_depth=16)
-    tree.extend(1, [1, 2, 3, 4])
-    tree.extend(2, [9, 2, 3, 7])
-    # Suffix [1,2,3] matches only seq 1 -> continuation 4, not 7.
-    draft = tree.speculate([1, 2, 3], max_spec_tokens=4, max_spec_factor=2.0)
-    assert draft.token_ids == [4]
-
-
-def test_py_suffix_tree_spec_factor_caps_draft():
-    tree = PySuffixTree(max_depth=16)
-    tree.extend(1, [5, 1, 2, 3, 4, 5, 6, 7, 8])
-    draft = tree.speculate([9, 9, 5], max_spec_tokens=8, max_spec_factor=1.0)
-    assert draft is not None
-    assert len(draft.token_ids) == 1  # match_len 1 * factor 1.0
-
-
-def test_py_suffix_tree_min_prob_truncates():
-    tree = PySuffixTree(max_depth=16)
-    # After [1], continuations split 50/50 -> prob 0.5 each step.
-    tree.extend(1, [1, 2, 3])
-    tree.extend(2, [1, 4, 5])
-    draft = tree.speculate([1], max_spec_tokens=8, max_spec_factor=8.0, min_token_prob=0.6)
-    assert draft is None or draft.token_ids == []
-
-
-def test_py_suffix_tree_remove():
-    tree = PySuffixTree(max_depth=16)
-    tree.extend(1, [1, 2, 3, 4])
-    tree.remove(1)
-    assert tree.speculate([1, 2, 3], max_spec_tokens=4) is None
 
 
 # ---------------------------------------------------------------- deltas

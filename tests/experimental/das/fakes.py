@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+from verl.experimental.das.drafter_state import DraftResult
 from verl.workers.rollout.replica import TokenOutput
 
 
@@ -66,3 +67,72 @@ class FakeServer:
 def fake_ray_get(ref, timeout=None):
     """Drop-in for ``ray.get`` on :class:`Ref` values."""
     return ref.value if isinstance(ref, Ref) else ref
+
+
+class PySuffixTree:
+    """Pure-Python frequency-greedy suffix drafter for tests (arctic-inference is not importable on CPU CI).
+
+    Mirrors arctic's SuffixTree semantics: longest-suffix match, greedy most-frequent continuation,
+    frequency-ratio probabilities, and the ``max_spec_factor * match_len`` cap, with O(corpus) scans.
+    """
+
+    def __init__(self, max_depth: int) -> None:
+        self.max_depth = max_depth
+        self._seqs: dict[int, list[int]] = {}
+
+    def extend(self, seq_id: int, token_ids) -> None:
+        self._seqs.setdefault(seq_id, []).extend(int(t) for t in token_ids)
+
+    def remove(self, seq_id: int) -> None:
+        self._seqs.pop(seq_id, None)
+
+    def speculate(
+        self,
+        pattern,
+        max_spec_tokens: int,
+        max_spec_factor: float = 1.0,
+        max_spec_offset: float = 0.0,
+        min_token_prob: float = 0.1,
+    ) -> DraftResult | None:
+        pattern = [int(t) for t in pattern][-self.max_depth :]
+        for match_len in range(len(pattern), 0, -1):
+            suffix = pattern[-match_len:]
+            cursors = self._match_positions(suffix)
+            if not cursors:
+                continue
+            cap = min(max_spec_tokens, int(match_len * max_spec_factor + max_spec_offset + 1e-6))
+            draft = self._greedy_draft(cursors, cap, min_token_prob)
+            if draft.token_ids:
+                draft.match_len = match_len
+                return draft
+        return None
+
+    def _match_positions(self, suffix: list[int]) -> list[tuple[int, int]]:
+        n = len(suffix)
+        out: list[tuple[int, int]] = []
+        for seq_id, seq in self._seqs.items():
+            out.extend((seq_id, pos + n) for pos in range(len(seq) - n + 1) if seq[pos : pos + n] == suffix)
+        return out
+
+    def _greedy_draft(self, cursors: list[tuple[int, int]], cap: int, min_token_prob: float) -> DraftResult:
+        tokens: list[int] = []
+        prob = 1.0
+        score = 0.0
+        while len(tokens) < cap:
+            counts: dict[int, int] = {}
+            total = 0
+            for seq_id, pos in cursors:
+                seq = self._seqs[seq_id]
+                if pos < len(seq):
+                    counts[seq[pos]] = counts.get(seq[pos], 0) + 1
+                    total += 1
+            if not counts:
+                break
+            best_tok = max(counts, key=lambda t: counts[t])
+            prob *= counts[best_tok] / total
+            if prob < min_token_prob:
+                break
+            tokens.append(best_tok)
+            score += prob
+            cursors = [(s, p + 1) for s, p in cursors if self._seqs[s][p : p + 1] == [best_tok]]
+        return DraftResult(tokens, score, 0)

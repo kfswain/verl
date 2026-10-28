@@ -80,11 +80,3 @@ class DASPushClient:
     async def _delayed_flush(self) -> None:
         await asyncio.sleep(self._cfg.push_flush_interval_s)
         self.flush()
-
-    def metrics(self) -> dict:
-        return {
-            "pushed": self.pushed,
-            "dropped": self.dropped,
-            "buffered": len(self._buffer),
-            "flush_errors": self.flush_errors,
-        }

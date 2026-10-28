@@ -43,7 +43,6 @@ logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
 _LOG_CAPACITY = 200_000
 _EMA_ALPHA = 0.2
-_RECENT_LENGTHS = 64
 
 # Log entry kinds.
 _ADD = "add"
@@ -63,9 +62,7 @@ class _SeqRecord:
 class _ProblemState:
     seqs: OrderedDict[int, _SeqRecord] = field(default_factory=OrderedDict)
     count: int = 0
-    mean: float = 0.0
     ema_mean: float = 0.0
-    recent_lengths: deque[int] = field(default_factory=lambda: deque(maxlen=_RECENT_LENGTHS))
     cls: int = 0
 
 
@@ -88,9 +85,7 @@ class SuffixDataService:
         self._window: OrderedDict[int, dict] = OrderedDict()
         self._log: deque[tuple[int, str, object]] = deque(maxlen=_LOG_CAPACITY)
         self._total_tokens = 0
-        self._replica_versions: dict[str, int] = {}
         self._pushes_received = 0
-        self._snapshots_served = 0
 
     # ------------------------------------------------------------------ log
 
@@ -142,9 +137,7 @@ class SuffixDataService:
 
     def _update_stats(self, problem_id: str, prob: _ProblemState, length: int) -> None:
         prob.count += 1
-        prob.mean += (length - prob.mean) / prob.count
         prob.ema_mean = float(length) if prob.count == 1 else _EMA_ALPHA * length + (1.0 - _EMA_ALPHA) * prob.ema_mean
-        prob.recent_lengths.append(length)
         new_cls = self.cfg.class_for_length(prob.ema_mean)
         # Emit on the first sequence too: engines treat unknown problems as Medium, so a Short
         # problem that never changes class must still be announced as Short.
@@ -243,7 +236,6 @@ class SuffixDataService:
 
     def get_deltas(self, replica_id: str, since_version: int) -> bytes | None:
         """Serialized ``DeltaBatch`` with everything servable after *since_version*, or None if caught up."""
-        self._replica_versions[replica_id] = since_version
         # Per-iteration serving: only entries up to the last begin_iteration
         # boundary ship. A fresh replica (-1) and an empty service (version 0)
         # are in sync: entry versions start at 1.
@@ -252,7 +244,6 @@ class SuffixDataService:
         # Incremental replay needs every entry in (since_version, servable] to
         # still be in the log; versions are contiguous starting at 1.
         if max(since_version + 1, 1) < self._log_floor():
-            self._snapshots_served += 1
             return serialize_delta_batch(self._build_snapshot())
         return serialize_delta_batch(self._build_incremental(since_version))
 
@@ -328,9 +319,6 @@ class SuffixDataService:
     # ------------------------------------------------------------- metrics
 
     def get_metrics(self) -> dict[str, float]:
-        # Lag counts servable-but-unfetched entries only; withheld entries
-        # are not lag (no replica may have them yet by design).
-        lag = {replica: max(0.0, float(self._servable_version - v)) for replica, v in self._replica_versions.items()}
         return {
             "das_iteration": float(self._iteration),
             "das_log_version": float(self._version),
@@ -340,8 +328,6 @@ class SuffixDataService:
             "das_total_tokens": float(self._total_tokens),
             "das_window_iterations": float(len(self._window)),
             "das_pushes_received": float(self._pushes_received),
-            "das_snapshots_served": float(self._snapshots_served),
-            "das_max_replica_lag": max(lag.values()) if lag else 0.0,
         }
 
 

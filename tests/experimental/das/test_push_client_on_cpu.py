@@ -86,7 +86,6 @@ def test_flush_errors_never_raise():
     client = DASPushClient(service, "w1", cfg(push_batch_size=1, push_queue_capacity=1))
     client.enqueue(make_push())
     assert client.flush_errors == 1
-    assert client.metrics()["flush_errors"] == 1
 
 
 def test_flush_without_event_loop_is_synchronous():
